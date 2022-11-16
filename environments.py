@@ -1,4 +1,4 @@
-from functools import cached_property
+from functools import cached_property, lru_cache
 import random
 import numpy as np
 import pickle
@@ -18,10 +18,10 @@ class Environment:
     def reset(self):
         raise NotImplementedError()
 
-    # def actions(self, state):
-    #     raise NotImplementedError()
+    def actions(self, state):
+        raise NotImplementedError()
 
-    def transitions(self, state, action, V):
+    def transitions(self, state, action):
         raise NotImplementedError()
 
     def reward(self, state):
@@ -30,30 +30,7 @@ class Environment:
     def step(self, action):
         raise NotImplementedError()
 
-    def simulate(self, V, n):
-        rewards = []
-        for _ in range(n):
-            self.reset()
-
-            R = 0
-            while True:
-                actions = self.actions(self.state)
-                if not actions:
-                    break
-                best = np.argmax(
-                    [
-                        sum(p * V[s] for s, p in self.transitions(self.state, a, None))
-                        for a in actions
-                    ]
-                )
-                reward, done = self.step(actions[best], None)
-                R += reward
-                if done:
-                    break
-            rewards.append(R)
-        return np.mean(rewards)
-
-    def simulate_policy(self, policy, n):
+    def simulate(self, policy, n):
         rewards = []
         for _ in range(n):
             self.reset()
@@ -64,7 +41,7 @@ class Environment:
                 if not actions:
                     break
                 action = get_action(policy, self.state)
-                reward, done = self.step(action, None)
+                reward, done = self.step(action)
                 R += reward
                 if done:
                     break
@@ -100,7 +77,7 @@ class Chopsticks(Environment):
     However, we can generalize this to an n-point game.
     """
 
-    def __init__(self, n=6, gamma=0.99, policy="chopsticks_opponent.pkl"):
+    def __init__(self, n=6, gamma=0.99, policy="chopsticks.policy"):
         self.n = n
         self.gamma = gamma
         self.T = {}
@@ -132,7 +109,7 @@ class Chopsticks(Environment):
                         S.append((i, j, k, l))
         return S
 
-    # @cached_property
+    @lru_cache()
     def actions(self, state):
         """
         The possible actions that player 1 can take in this state.
@@ -164,7 +141,7 @@ class Chopsticks(Environment):
         self.T[state] = [x for x in sanitized if x != (i, j, k, l)]
         return self.T[state]
 
-    def transitions(self, state, action, V):
+    def transitions(self, state, action):
         """
         Return (s', p) tuples containing the next states and probabilities
         for taking <action> in <state>.
@@ -174,22 +151,115 @@ class Chopsticks(Environment):
 
         # Possible action from player 2's perspective
         options = self.opponent[rev(action)]
-
-        # if V is None:
         return [(rev(s), p) for s, p in options.items()]
-        # else:
-        #     top_options = np.argsort([V[rev(s)] for s in options])[:10]
-        #     return [(rev(options[o]), 1 / len(top_options)) for o in top_options]
 
     def reward(self, state):
         i, j, k, l = state
-        if i + j == 0:
+        if (i + j) == 0:
             return -1
-        if k + l == 0:
+        if (k + l) == 0:
             return 1
-        return 0
+        return 0.0
 
-    def step(self, action, V):
-        options = self.transitions(None, action, V)
+    def step(self, action):
+        options = self.transitions(None, action)
         self.state = random.choice(options)[0]
         return self.reward(self.state), self.done(self.state)
+
+
+class Racecar(Environment):
+    def __init__(self):
+        self.max_speed = 3
+        self.max_fuel = 3
+        self.steps = 0
+        self.gamma = 0.9
+
+    def reset(self):
+        self.steps = 0
+        self.state = (0, self.max_fuel, self.max_speed)
+
+    def pit_stop(self, temp, fuel, speed):
+        if fuel == 0:
+            return 0.95
+        elif temp >= 2:
+            return temp / 10
+        elif temp >= 1:
+            return temp / 20
+        elif temp >= 0:
+            return temp / 30
+        return 0
+
+    @cached_property
+    def states(self):
+        output = []
+        for temp in np.arange(0, 2.1, 0.5):
+            for fuel in np.arange(0, self.max_fuel + 0.1, 0.5):
+                for speed in range(self.max_speed + 1):
+                    output.append((temp, fuel, speed))
+        return output
+
+    def actions(self, state):
+        return (-1, 0, 1)
+
+    def transitions(self, state, action):
+        temp, fuel, speed = state
+        output = []
+
+        p_heat = 0.5
+
+        if action == -1:
+            speed = max(speed - 1, 0)
+            if speed <= 1:
+                fuel = min(fuel + 1, self.max_fuel)
+
+            temp_ = max(temp - 1, 0)
+            p_blowout = self.pit_stop(temp_, fuel, speed)
+            output.append(((temp_, fuel, speed), p_heat * (1 - p_blowout)))
+            output.append(((0, self.max_fuel, 0), p_heat * p_blowout))
+
+            temp_ = temp
+            p_blowout = self.pit_stop(temp_, fuel, speed)
+            output.append(((temp_, fuel, speed), (1 - p_heat) * (1 - p_blowout)))
+            output.append(((0, self.max_fuel, 0), (1 - p_heat) * p_blowout))
+
+        elif action == 1 and fuel >= 1:
+            fuel = max(fuel - 1, 0)
+            speed = min(speed + 1, self.max_speed)
+
+            temp_ = min(temp + 1, 2)
+            p_blowout = self.pit_stop(temp_, fuel, speed)
+            output.append(((temp_, fuel, speed), p_heat * (1 - p_blowout)))
+            output.append(((0, self.max_fuel, 0), p_heat * p_blowout))
+
+            temp_ = temp
+            p_blowout = self.pit_stop(temp_, fuel, speed)
+            output.append(((temp_, fuel, speed), (1 - p_heat) * (1 - p_blowout)))
+            output.append(((0, self.max_fuel, 0), (1 - p_heat) * p_blowout))
+
+        else:
+            fuel = max(fuel - 0.5, 0)
+            if speed <= 1:
+                fuel = min(fuel + 0.5, self.max_fuel)
+
+            temp_ = min(temp + 0.5, 2)
+            p_blowout = self.pit_stop(temp_, fuel, speed)
+            output.append(((temp_, fuel, speed), p_heat * (1 - p_blowout)))
+            output.append(((0, self.max_fuel, 0), p_heat * p_blowout))
+
+            temp_ = temp
+            p_blowout = self.pit_stop(temp_, fuel, speed)
+            output.append(((temp_, fuel, speed), (1 - p_heat) * (1 - p_blowout)))
+            output.append(((0, self.max_fuel, 0), (1 - p_heat) * p_blowout))
+
+        return [s for s in output if s[1] > 0]
+
+    def reward(self, state):
+        return state[-1]
+
+    def step(self, action):
+        self.steps += 1
+        options = np.array(self.transitions(self.state, action), dtype=object)
+        self.state = np.random.choice(options[:, 0], p=options[:, 1].astype("float64"))
+        reward = self.reward(self.state)
+        done = self.steps > 2000
+        return reward, done
