@@ -168,15 +168,19 @@ class Chopsticks(Environment):
 
 
 class Racecar(Environment):
-    def __init__(self):
+    def __init__(self, gamma=0.9):
         self.max_speed = 3
         self.max_fuel = 3
         self.steps = 0
-        self.gamma = 0.9
+        self.gamma = gamma
 
     def reset(self):
         self.steps = 0
-        self.state = (0, self.max_fuel, self.max_speed)
+        temp = np.random.choice(np.arange(0, 2.1, 0.5))
+        fuel = np.random.choice(np.arange(0, self.max_fuel + 0.1, 0.5))
+        speed = np.random.choice(list(range(self.max_speed + 1)))
+        self.state = (temp, fuel, speed)
+        # self.state = (0, self.max_fuel, self.max_speed)
 
     def pit_stop(self, temp, fuel, speed):
         if fuel == 0:

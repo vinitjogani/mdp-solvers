@@ -29,22 +29,21 @@ def epsilon_greedy(policy, env, eps=0.001):
     for s in policy:
         all_actions = env.actions(s)
         actions = dict(policy[s])
-        if len(actions) == len(all_actions):
-            continue
 
-        residual = eps / (len(all_actions) - len(actions))
-        normalizer = sum(actions.values()) + eps
+        if not all_actions: continue
+
+        residual = eps / len(all_actions)
         for a in all_actions:
             if a not in actions:
-                actions[a] = residual / normalizer
+                actions[a] = eps / len(all_actions)
             else:
-                actions[a] /= normalizer
+                actions[a] = (1 - eps) * actions[a] + residual
 
         policy[s] = actions
     return policy
 
 
-def value_iteration(env, max_iters=500):
+def value_iteration(env, max_iters=500, rsims=100):
 
     V = {}
     for s in env.states:
@@ -58,7 +57,7 @@ def value_iteration(env, max_iters=500):
     delta = 1
     while delta > 1e-3 and max_iters > 0:
         max_iters -= 1
-        reward_history.append(env.simulate(derive_policy(env, V), 100))
+        reward_history.append(env.simulate(derive_policy(env, V), rsims))
         delta = 0
 
         V_ = dict(V)
@@ -75,9 +74,10 @@ def value_iteration(env, max_iters=500):
 
         policy_ = policy
         policy = derive_policy(env, V)
+        time_history.append(time.time() - start)
+
         changes = compare_policies(policy_, policy)
         change_history.append(changes)
-        time_history.append(time.time() - start)
         if changes == 0:
             print("Converged!")
             break
@@ -110,7 +110,7 @@ def policy_evaluation(policy, env):
     return V
 
 
-def policy_iteration(env, iters=15):
+def policy_iteration(env, iters=15, rsims=100):
     V = {}
     policy = {}
     for s in env.states:
@@ -120,22 +120,100 @@ def policy_iteration(env, iters=15):
     change_history = []
     reward_history = []
     time_history = []
-    start = time.time()
+    timer = 0
 
     for _ in range(iters):
-        reward_history.append(env.simulate(policy, 100))
-        V = policy_evaluation(policy, env)
+        reward_history.append(env.simulate(policy, rsims))
 
+        start = time.time()
+        V = policy_evaluation(policy, env)
         policy_ = policy
         policy = derive_policy(env, V)
+        timer += time.time() - start
+        time_history.append(timer)
+
         changes = compare_policies(policy_, policy)
         change_history.append(changes)
-        time_history.append(time.time() - start)
         if changes == 0:
             print("Converged!")
             break
 
     return V, policy, change_history, reward_history, time_history
+
+
+def generate_episode(policy, env, max_iters=2000):
+    env.reset()
+    done = False 
+    episode = []
+
+    while not done and max_iters > 0:
+        max_iters -= 1
+        state = env.state 
+        action = get_action(policy, state)
+        reward, done = env.step(action)
+        episode.append((state, action, reward, env.state, done))
+
+    return episode
+
+
+
+def q_learning(env, iters=100, eps=0.2, eps_decay=0.95, min_eps=0.001, lr=0.1, replay_size=100_000, rsims=100):
+    Q = {}
+    policy = {}
+    for s in env.states:
+        actions = env.actions(s)
+        Q[s] = {a: 0 for a in actions}
+        policy[s] = {a: 1 / len(actions) for a in actions}
+    change_history, reward_history, time_history = [], [], []
+    timer = 0
+    unchanged = 0
+
+    replay_memory = []
+    for _ in range(iters):
+        reward_history.append(env.simulate(policy, rsims))
+        print(reward_history[-1])
+        
+        start = time.time()
+
+        Q_ = dict(Q)
+        policy_ = policy
+        policy = dict(policy_)
+        for s in Q:
+            if not Q[s]: continue
+            best = max((v, a) for a, v in Q[s].items())[1]
+            policy[s] = {best:1.0}
+
+        episode = generate_episode(epsilon_greedy(policy, env, eps), env, 50)
+        replay_memory.extend(episode)
+        replay_memory = replay_memory[-replay_size:]
+        for s, a, r, s_, d in replay_memory: 
+            if d:
+                new = r 
+            else:
+                new = r + env.gamma * max(Q[s_].values())
+            old = Q_[s][a]
+            Q_[s][a] += lr * (new - old)
+        Q = Q_
+
+        timer += time.time() - start
+        time_history.append(timer)
+        eps = max(eps * eps_decay, min_eps)
+
+        changes = compare_policies(policy_, policy)
+        change_history.append(changes)
+        if changes == 0:
+            unchanged += 1
+            if unchanged >= 10:
+                print("Converged!")
+                break
+        else:
+            unchanged = 0
+
+    
+    V = {s:(max(Q[s].values()) if Q[s] else 0) for s in Q}
+    policy = derive_policy(env, V)
+    return V, policy, change_history, reward_history, time_history, Q
+    
 
 
 if __name__ == "__main__":
