@@ -157,7 +157,7 @@ def generate_episode(policy, env, max_iters=2000):
 
 
 
-def q_learning(env, iters=100, eps=0.2, eps_decay=0.95, min_eps=0.001, lr=0.1, replay_size=100_000, rsims=100):
+def q_learning(env, iters=100, eps=0.2, eps_decay=0.95, min_eps=0.001, lr=0.1, replay_size=1_000_000, rsims=100, min_reward=0.99):
     Q = {}
     policy = {}
     for s in env.states:
@@ -183,7 +183,7 @@ def q_learning(env, iters=100, eps=0.2, eps_decay=0.95, min_eps=0.001, lr=0.1, r
             best = max((v, a) for a, v in Q[s].items())[1]
             policy[s] = {best:1.0}
 
-        episode = generate_episode(epsilon_greedy(policy, env, eps), env, 50)
+        episode = generate_episode(epsilon_greedy(policy, env, eps), env, 500)
         replay_memory.extend(episode)
         replay_memory = replay_memory[-replay_size:]
         for s, a, r, s_, d in replay_memory: 
@@ -201,9 +201,9 @@ def q_learning(env, iters=100, eps=0.2, eps_decay=0.95, min_eps=0.001, lr=0.1, r
 
         changes = compare_policies(policy_, policy)
         change_history.append(changes)
-        if changes == 0:
+        if reward_history[-1] >= min_reward:
             unchanged += 1
-            if unchanged >= 10:
+            if unchanged >= 3:
                 print("Converged!")
                 break
         else:
