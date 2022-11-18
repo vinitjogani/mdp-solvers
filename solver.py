@@ -30,7 +30,8 @@ def epsilon_greedy(policy, env, eps=0.001):
         all_actions = env.actions(s)
         actions = dict(policy[s])
 
-        if not all_actions: continue
+        if not all_actions:
+            continue
 
         residual = eps / len(all_actions)
         for a in all_actions:
@@ -143,12 +144,12 @@ def policy_iteration(env, iters=15, rsims=100):
 
 def generate_episode(policy, env, max_iters=2000):
     env.reset()
-    done = False 
+    done = False
     episode = []
 
     while not done and max_iters > 0:
         max_iters -= 1
-        state = env.state 
+        state = env.state
         action = get_action(policy, state)
         reward, done = env.step(action)
         episode.append((state, action, reward, env.state, done))
@@ -156,13 +157,23 @@ def generate_episode(policy, env, max_iters=2000):
     return episode
 
 
-
-def q_learning(env, iters=100, eps=0.2, eps_decay=0.95, min_eps=0.001, lr=0.1, replay_size=1_000_000, rsims=100, min_reward=0.99):
+def q_learning(
+    env,
+    iters=100,
+    eps=0.2,
+    eps_decay=0.95,
+    min_eps=0.001,
+    lr=0.1,
+    replay_size=1_000_000,
+    rsims=100,
+    min_reward=0.99,
+    init=0,
+):
     Q = {}
     policy = {}
     for s in env.states:
         actions = env.actions(s)
-        Q[s] = {a: 0 for a in actions}
+        Q[s] = {a: init for a in actions}
         policy[s] = {a: 1 / len(actions) for a in actions}
     change_history, reward_history, time_history = [], [], []
     timer = 0
@@ -172,23 +183,24 @@ def q_learning(env, iters=100, eps=0.2, eps_decay=0.95, min_eps=0.001, lr=0.1, r
     for _ in range(iters):
         reward_history.append(env.simulate(policy, rsims))
         print(reward_history[-1])
-        
+
         start = time.time()
 
         Q_ = dict(Q)
         policy_ = policy
         policy = dict(policy_)
         for s in Q:
-            if not Q[s]: continue
+            if not Q[s]:
+                continue
             best = max((v, a) for a, v in Q[s].items())[1]
-            policy[s] = {best:1.0}
+            policy[s] = {best: 1.0}
 
         episode = generate_episode(epsilon_greedy(policy, env, eps), env, 500)
         replay_memory.extend(episode)
         replay_memory = replay_memory[-replay_size:]
-        for s, a, r, s_, d in replay_memory: 
+        for s, a, r, s_, d in replay_memory:
             if d:
-                new = r 
+                new = r
             else:
                 new = r + env.gamma * max(Q[s_].values())
             old = Q_[s][a]
@@ -209,11 +221,9 @@ def q_learning(env, iters=100, eps=0.2, eps_decay=0.95, min_eps=0.001, lr=0.1, r
         else:
             unchanged = 0
 
-    
-    V = {s:(max(Q[s].values()) if Q[s] else 0) for s in Q}
+    V = {s: (max(Q[s].values()) if Q[s] else 0) for s in Q}
     policy = derive_policy(env, V)
     return V, policy, change_history, reward_history, time_history, Q
-    
 
 
 if __name__ == "__main__":
